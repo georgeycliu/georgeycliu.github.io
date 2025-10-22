@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>3D Toric Code — Glauber Dynamics (Z checks on faces)</title>
+  <style>
+    :root {
+      --bg: #0b0e13;
+      --panel: #121722;
+      --muted: #aeb6c1;
+      --text: #e7edf6;
+      --accent: #6aa9ff;
+      --danger: #ff6b6b;
+      --ok: #52d273;
+      --warn: #ffd166;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: radial-gradient(1000px 600px at 70% 20%, #151b26 0%, var(--bg) 40%);
+      color: var(--text);
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 330px 1fr;
+      grid-template-rows: auto 1fr;
+      gap: 14px;
+      height: 100%;
+      padding: 14px;
+    }
+    header {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: linear-gradient(180deg, #192132 0%, #121722 100%);
+      border: 1px solid #1e2636;
+      border-radius: 16px;
+      box-shadow: 0 6px 30px rgba(0,0,0,.25);
+    }
+    header h1 { font-size: 18px; margin: 0; letter-spacing: 0.2px; }
+    header .sub { color: var(--muted); font-size: 12px; }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid #1e2636;
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 10px 30px rgba(0,0,0,.25);
+      overflow: auto;
+    }
+
+    .controls { max-height: calc(100vh - 120px); }
+
+    .row { display: grid; grid-template-columns: 1fr 100px; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .row > label { font-size: 12px; color: var(--muted); }
+    .row span.value { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+
+    .buttons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; }
+
+    button, select, input[type="number"], input[type="text"] {
+      width: 100%;
+      appearance: none;
+      background: #0e1420;
+      border: 1px solid #2a3550;
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 13px;
+    }
+    button { cursor: pointer; transition: transform .08s ease, background .15s ease; }
+    button:hover { transform: translateY(-1px); }
+    button.primary { background: linear-gradient(180deg, #1a4bff 0%, #0f35c7 100%); border-color: #406cff; }
+    button.warn { background: linear-gradient(180deg, #ff9f1c 0%, #e07b00 100%); border-color: #ffb34f; }
+    button.danger { background: linear-gradient(180deg, #ff5e7a 0%, #d63552 100%); border-color: #ff90a2; }
+
+    input[type="range"] { width: 100%; }
+    .tiny { font-size: 11px; color: var(--muted); }
+
+    .canvas-wrap { position: relative; }
+    canvas { display: block; width: 100%; height: 100%; border-radius: 16px; }
+    .overlay {
+      position: absolute; left: 12px; bottom: 12px; right: 12px;
+      display: grid; grid-template-columns: repeat(4, auto); gap: 10px; align-items: center;
+      background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.08); padding: 8px 12px; border-radius: 12px;
+      backdrop-filter: blur(4px);
+    }
+    .stat { font-variant-numeric: tabular-nums; font-size: 12px; color: #eef3ff; }
+
+    details { margin-top: 12px; }
+    details summary { cursor: pointer; color: var(--accent); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>3D Toric Code — Glauber Dynamics</h1>
+        <div class="sub">Z checks on faces; dual lattice line rendering • periodic boundary conditions</div>
+      </div>
+      <div class="tiny">Inspired by Daniel V. Schroeder’s HTML5 Ising demo</div>
+    </header>
+
+    <aside class="panel controls">
+      <div class="row">
+        <label for="L">Lattice size (L)</label>
+        <select id="L">
+          <option>6</option>
+          <option selected>10</option>
+          <option>12</option>
+          <option>16</option>
+          <option>20</option>
+          <option>24</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label for="kind">Initialization</label>
+        <select id="kind">
+          <option value="uniform" selected>uniform (edges p=1/2)</option>
+          <option value="iid">iid edges (prob p)</option>
+          <option value="single">single random edge</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label for="p">p for iid</label>
+        <input id="p" type="number" min="0" max="1" step="0.01" value="0.5" />
+      </div>
+
+      <div class="row">
+        <label for="seed">RNG seed (optional)</label>
+        <input id="seed" type="text" placeholder="e.g. 12345" />
+      </div>
+
+      <div class="row">
+        <label>Temperature T</label>
+        <span class="value"><span id="TLabel">0.00</span></span>
+      </div>
+      <input id="T" type="range" min="0" max="4" value="0" step="0.01" />
+      <div class="tiny">T=0 uses the standard tie-breaker: flip with probability 1/2 when ΔE=0.</div>
+
+      <div class="row">
+        <label>Updates per frame</label>
+        <span class="value"><span id="spfLabel">100</span></span>
+      </div>
+      <input id="spf" type="range" min="1" max="2000" step="1" value="100" />
+
+      <div class="row">
+        <label>Show inactive dual edges</label>
+        <select id="inactiveMode">
+          <option value="dim" selected>Dim (faint gray)</option>
+          <option value="hide">Hide</option>
+          <option value="solid">Solid gray</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label>Auto-rotate camera</label>
+        <select id="autorotate">
+          <option value="off" selected>Off</option>
+          <option value="slow">Slow</option>
+          <option value="fast">Fast</option>
+        </select>
+      </div>
+
+      <div class="buttons">
+        <button id="btnStart" class="primary">Start</button>
+        <button id="btnStep">Step</button>
+        <button id="btnReset" class="warn">Reset</button>
+        <button id="btnRandom" class="danger">Randomize</button>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel" style="padding:10px;">
+          <div class="tiny">Violated Z checks</div>
+          <div class="stat"><span id="frac">—</span></div>
+        </div>
+        <div class="panel" style="padding:10px;">
+          <div class="tiny">Steps / second</div>
+          <div class="stat"><span id="sps">0</span></div>
+        </div>
+      </div>
+
+      <details>
+        <summary>About this demo</summary>
+        <div style="margin-top:8px; color: var(--muted); font-size: 13px; line-height: 1.35;">
+          This page visualizes <em>Glauber dynamics</em> acting on the three families of faces (xy, xz, yz) of an L×L×L 3D torus.
+          We render the <strong>dual lattice</strong>: each violated Z check (face) is drawn as a short edge segment in the dual grid.
+          At each update, we choose a random <em>edge</em> (qubit) and consider its four incident faces; with probability
+          1/(1+exp(Δ/T)) where Δ=4−2A and A is the number of violated faces among those four, we flip all four faces.
+          Initialization draws an X-error pattern on edges and computes the Z-syndrome, matching the toric code geometry.
+          Camera: drag to orbit, scroll to zoom, right-drag to pan. Space = Start/Pause; S = Step; R = Randomize; 0 = T→0.
+        </div>
+        <div class="tiny" style="margin-top:6px;">Design inspired by Daniel V. Schroeder’s HTML5 Ising model canvas demo.</div>
+      </details>
+    </aside>
+
+    <main class="panel canvas-wrap">
+      <div id="threeMount" style="position:absolute; inset: 0;"></div>
+      <div class="overlay">
+        <div class="tiny">L: <span id="LBadge">10</span></div>
+        <div class="tiny">T: <span id="TBadge">0.00</span></div>
+        <div class="tiny">step: <span id="stepCount">0</span></div>
+        <div class="tiny">active: <span id="activeCount">0</span>/<span id="totalCount">0</span></div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module">
+    // ---- Utilities: seeded RNG (Mulberry32) ----
+    function hashStr(str) {
+      let h = 1779033703 ^ str.length;
+      for (let i = 0; i < str.length; i++) {
+        h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+        h = (h << 13) | (h >>> 19);
+      }
+      return (h >>> 0);
+    }
+    function mulberry32(seed) {
+      let t = seed >>> 0;
+      return function() {
+        t += 0x6D2B79F5;
+        let r = Math.imul(t ^ (t >>> 15), 1 | t);
+        r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+        return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    class RNG {
+      constructor(seed=null) { this.setSeed(seed); }
+      setSeed(seed) {
+        if (seed === null || seed === undefined || seed === "") { this.rand = Math.random; this._seed = null; return; }
+        const s = (typeof seed === 'number') ? seed >>> 0 : hashStr(String(seed));
+        this.rand = mulberry32(s);
+        this._seed = s;
+      }
+      uniform() { return this.rand(); }
+      int(max) { return Math.floor(this.rand() * max); }
+      choice(n) { return this.int(n); }
+    }
+
+    // ---- Simulation core: 3D toric code faces S and Glauber update ----
+    class Glauber3DToric {
+      constructor(L=10, seed=null) {
+        this.L = L|0;
+        this.Nfaces = 3 * L * L * L; // (xy, xz, yz) per cube
+        this.S = new Uint8Array(this.Nfaces); // boolean 0/1
+        this.rng = new RNG(seed);
+        this.stepCount = 0;
+      }
+      cloneS() { return new Uint8Array(this.S); }
+      // Index helpers
+      idx3(x,y,z) { return (x*this.L + y)*this.L + z; }
+      faceIndex(x,y,z,ori) { return this.idx3(x,y,z)*3 + ori; }
+      edgeIndex(x,y,z,dir) { return this.idx3(x,y,z)*3 + dir; }
+      mod(a) { const L=this.L; a%=L; return (a<0? a+L: a); }
+      pairToIdx(d1,d2) { // map (0,1)->0 (xy), (0,2)->1 (xz), (1,2)->2 (yz)
+        if (d1>d2) [d1,d2]=[d2,d1];
+        if (d1===0 && d2===1) return 0;
+        if (d1===0 && d2===2) return 1;
+        if (d1===1 && d2===2) return 2;
+        throw new Error('bad pair');
+      }
+
+      // Draw X errors on edges
+      random_X_error_edges(kind="uniform", p=0.5) {
+        const L=this.L, n=3*L*L*L; const E=new Uint8Array(n);
+        if (kind==="uniform") {
+          for (let i=0;i<n;i++) E[i] = (this.rng.uniform() < 0.5) ? 1:0;
+        } else if (kind==="iid") {
+          for (let i=0;i<n;i++) E[i] = (this.rng.uniform() < p) ? 1:0;
+        } else if (kind==="single") {
+          const k = this.rng.int(n); E[k]=1;
+        } else { throw new Error("kind must be 'uniform', 'iid', or 'single'."); }
+        return E;
+      }
+
+      // Compute Z syndrome S on faces from X-edge errors E
+      z_syndrome_from_X_edges(E) {
+        const L=this.L; const S=this.S; S.fill(0);
+        const roll = (x,axis) => {
+          // returns index triplet shifted by +1 along axis in-place usage
+          if (axis===0) return [(x[0]+1)%L, x[1], x[2]];
+          if (axis===1) return [x[0], (x[1]+1)%L, x[2]];
+          return [x[0], x[1], (x[2]+1)%L];
+        };
+        // pairs: (0,1)->ori0, (0,2)->ori1, (1,2)->ori2
+        for (let x=0;x<L;x++){
+          for (let y=0;y<L;y++){
+            for (let z=0;z<L;z++){
+              // (0,1) xy
+              let idx = this.idx3(x,y,z)*3;
+              let E1 = E[this.edgeIndex(x,y,z,0)];
+              let E1p = E[this.edgeIndex((x), (y+1)%L, z, 0)];
+              let E2 = E[this.edgeIndex(x,y,z,1)];
+              let E2p = E[this.edgeIndex((x+1)%L, y, z, 1)];
+              S[idx+0] = (E1 ^ E1p ^ E2 ^ E2p);
+              // (0,2) xz
+              E1 = E[this.edgeIndex(x,y,z,0)];
+              E1p = E[this.edgeIndex(x, y, (z+1)%L, 0)];
+              E2 = E[this.edgeIndex(x,y,z,2)];
+              E2p = E[this.edgeIndex((x+1)%L, y, z, 2)];
+              S[idx+1] = (E1 ^ E1p ^ E2 ^ E2p);
+              // (1,2) yz
+              E1 = E[this.edgeIndex(x,y,z,1)];
+              E1p = E[this.edgeIndex(x, y, (z+1)%L, 1)];
+              E2 = E[this.edgeIndex(x,y,z,2)];
+              E2p = E[this.edgeIndex(x, (y+1)%L, z, 2)];
+              S[idx+2] = (E1 ^ E1p ^ E2 ^ E2p);
+            }
+          }
+        }
+      }
+
+      // Convenience: sample syndrome from edge errors
+      sample_Z_parity_checks(kind="uniform", p=0.5) {
+        const E = this.random_X_error_edges(kind, p);
+        this.z_syndrome_from_X_edges(E);
+        this.stepCount = 0;
+      }
+
+      // Glauber update: pick a random edge, compute Δ, probabilistic flip of 4 faces
+      glauber_update(T) {
+        const L=this.L, S=this.S; // pick random edge
+        const x = this.rng.int(L), y = this.rng.int(L), z = this.rng.int(L), d = this.rng.int(3);
+        const faces = new Int32Array(4); let f=0;
+        for (let d2=0; d2<3; d2++) if (d2!==d) {
+          const ori = this.pairToIdx(d, d2);
+          // face at v
+          faces[f++] = this.faceIndex(x,y,z,ori);
+          // face at v - e_{d2}
+          let cx=x, cy=y, cz=z;
+          if (d2===0) cx = (x-1+L)%L; else if (d2===1) cy = (y-1+L)%L; else cz = (z-1+L)%L;
+          faces[f++] = this.faceIndex(cx,cy,cz,ori);
+        }
+        let A = S[faces[0]] + S[faces[1]] + S[faces[2]] + S[faces[3]];
+        const delta = 4 - 2*A; // Δ = E_after - E_before up to constant factor
+        let flipProb;
+        if (T===0) {
+          flipProb = (delta<0) ? 1 : (delta>0 ? 0 : 0.5);
+        } else {
+          const xval = delta / T;
+          if (xval >= 0) { const e = Math.exp(-xval); flipProb = e / (1+e); }
+          else { const e = Math.exp(xval); flipProb = 1 / (1+e); }
+        }
+        if (this.rng.uniform() < flipProb) {
+          S[faces[0]] ^= 1; S[faces[1]] ^= 1; S[faces[2]] ^= 1; S[faces[3]] ^= 1;
+        }
+        this.stepCount++;
+      }
+
+      meanViolation() {
+        let sum=0; const S=this.S; for (let i=0;i<S.length;i++) sum+=S[i];
+        return sum / this.Nfaces;
+      }
+      activeCount() {
+        let sum=0; const S=this.S; for (let i=0;i<S.length;i++) sum+=S[i]; return sum;
+      }
+    }
+
+    // ---- THREE.js rendering of dual-lattice edge segments ----
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    class DualRenderer {
+      constructor(mountEl, L, sim) {
+        this.mountEl = mountEl; this.L=L; this.sim=sim;
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x0b0e13);
+        this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.mountEl.appendChild(this.renderer.domElement);
+        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.08;
+        this.controls.target.set((L-1)/2, (L-1)/2, (L-1)/2);
+
+        this.activeColor = new THREE.Color(0xd93333); // red-ish
+        this.inactiveDim = new THREE.Color(0x999999);
+        this.inactiveSolid = new THREE.Color(0x666a73);
+
+        this._buildSegments();
+        this._buildBox();
+
+        const camDist = Math.max(8, L*1.8);
+        this.camera.position.set(-camDist, camDist, camDist);
+        this.camera.lookAt(this.controls.target);
+        this.resize();
+        window.addEventListener('resize', ()=>this.resize());
+      }
+
+      _buildBox() {
+        const L=this.L; const box = new THREE.Box3(new THREE.Vector3(-0.5,-0.5,-0.5), new THREE.Vector3(L-0.5, L-0.5, L-0.5));
+        const helper = new THREE.Box3Helper(box, 0x2f3b55);
+        this.scene.add(helper); this.boxHelper = helper;
+      }
+
+      _buildSegments() {
+        const L=this.L, N = 3*L*L*L;
+        // position buffer: two vertices per segment → 6 floats per segment
+        const positions = new Float32Array(N*6);
+        const colors = new Float32Array(N*6);
+        let ptr=0; let cptr=0;
+        // order matches faceIndex(x,y,z,ori) with ori: 0=xy,1=xz,2=yz
+        for (let x=0;x<L;x++) {
+          for (let y=0;y<L;y++) {
+            for (let z=0;z<L;z++) {
+              const xh=x+0.5, yh=y+0.5, zh=z+0.5;
+              // (xy) → dual edge along z: (xh,yh,z-0.5)→(xh,yh,z+0.5)
+              positions[ptr++] = xh; positions[ptr++] = yh; positions[ptr++] = z-0.5;
+              positions[ptr++] = xh; positions[ptr++] = yh; positions[ptr++] = z+0.5;
+              // (xz) → dual edge along y: (xh,y-0.5,zh)→(xh,y+0.5,zh)
+              positions[ptr++] = xh; positions[ptr++] = y-0.5; positions[ptr++] = zh;
+              positions[ptr++] = xh; positions[ptr++] = y+0.5; positions[ptr++] = zh;
+              // (yz) → dual edge along x: (x-0.5,yh,zh)→(x+0.5,yh,zh)
+              positions[ptr++] = x-0.5; positions[ptr++] = yh; positions[ptr++] = zh;
+              positions[ptr++] = x+0.5; positions[ptr++] = yh; positions[ptr++] = zh;
+              // init colors → dim gray
+              for (let k=0;k<6;k++) colors[cptr++] = 0.58; // will be overwritten
+            }
+          }
+        }
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        const mat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 1.0 });
+        const lines = new THREE.LineSegments(geom, mat);
+        this.scene.add(lines);
+        this.lines = lines; this.positions = positions; this.colors = colors; this.N=N;
+      }
+
+      setInactiveMode(mode) { this.inactiveMode = mode; this.refreshColors(true); }
+      showBox(show=true) { if (this.boxHelper) this.boxHelper.visible = !!show; }
+
+      // Update all segment colors from the current S array
+      refreshColors(force=false) {
+        const S = this.sim.S; const N=this.N; const c = this.colors; const m=this.inactiveMode||'dim';
+        const active = this.activeColor; const dim = this.inactiveDim; const solid=this.inactiveSolid;
+        let cp=0;
+        for (let i=0;i<N;i++) {
+          const on = S[i]===1;
+          const col = on ? active : (m==='dim'? dim : (m==='hide'? null : solid));
+          if (col===null) {
+            // hide by setting fully transparent via RGB tiny and material opacity trick per-vertex isn't available; approximate by near-black
+            c[cp++] = 0.0; c[cp++] = 0.0; c[cp++] = 0.0;
+            c[cp++] = 0.0; c[cp++] = 0.0; c[cp++] = 0.0;
+          } else {
+            c[cp++] = col.r; c[cp++] = col.g; c[cp++] = col.b;
+            c[cp++] = col.r; c[cp++] = col.g; c[cp++] = col.b;
+          }
+        }
+        this.lines.geometry.attributes.color.needsUpdate = true;
+      }
+
+      resize() {
+        const rect = this.mountEl.getBoundingClientRect();
+        const w = rect.width, h = rect.height;
+        this.renderer.setSize(w,h,false);
+        this.camera.aspect = w/h; this.camera.updateProjectionMatrix();
+      }
+
+      render(dt=0, autorotate="off") {
+        if (autorotate!=="off") {
+          const speed = (autorotate==="fast" ? 0.25 : 0.06);
+          this.controls.autoRotate = true; this.controls.autoRotateSpeed = speed;
+        } else { this.controls.autoRotate = false; }
+        this.controls.update();
+        this.renderer.render(this.scene, this.camera);
+      }
+    }
+
+    // ---- App glue ----
+    const els = {
+      L: document.getElementById('L'),
+      kind: document.getElementById('kind'),
+      p: document.getElementById('p'),
+      seed: document.getElementById('seed'),
+      T: document.getElementById('T'),
+      TLabel: document.getElementById('TLabel'),
+      TBadge: document.getElementById('TBadge'),
+      spf: document.getElementById('spf'),
+      spfLabel: document.getElementById('spfLabel'),
+      btnStart: document.getElementById('btnStart'),
+      btnStep: document.getElementById('btnStep'),
+      btnReset: document.getElementById('btnReset'),
+      btnRandom: document.getElementById('btnRandom'),
+      frac: document.getElementById('frac'),
+      sps: document.getElementById('sps'),
+      mount: document.getElementById('threeMount'),
+      LBadge: document.getElementById('LBadge'),
+      stepCount: document.getElementById('stepCount'),
+      activeCount: document.getElementById('activeCount'),
+      totalCount: document.getElementById('totalCount'),
+      inactiveMode: document.getElementById('inactiveMode'),
+      autorotate: document.getElementById('autorotate'),
+    };
+
+    let sim, renderer, running=false, rafId=0, accum=0, last=performance.now();
+    let stepsThisSec=0, lastFPS=performance.now();
+
+    function initAll() {
+      const L = parseInt(els.L.value,10);
+      const seed = els.seed.value.trim() || null;
+      sim = new Glauber3DToric(L, seed);
+      sim.sample_Z_parity_checks(els.kind.value, parseFloat(els.p.value));
+      if (renderer) { renderer.mountEl.innerHTML=''; }
+      renderer = new DualRenderer(els.mount, L, sim);
+      renderer.setInactiveMode(els.inactiveMode.value);
+      renderer.refreshColors(true);
+      els.LBadge.textContent = String(L);
+      els.totalCount.textContent = String(sim.Nfaces);
+      updateStats(true);
+    }
+
+    function updateStats(force=false) {
+      // fraction of violated checks, sps, etc.
+      els.frac.textContent = sim.meanViolation().toFixed(4);
+      els.stepCount.textContent = String(sim.stepCount);
+      els.activeCount.textContent = String(sim.activeCount());
+      if (force) els.sps.textContent = '0';
+    }
+
+    function animate() {
+      const now = performance.now();
+      const dt = (now - last) / 1000;
+      last = now;
+      const spf = parseInt(els.spf.value, 10);
+      const T = parseFloat(els.T.value);
+      for (let i=0;i<spf;i++) { sim.glauber_update(T); }
+      stepsThisSec += spf;
+      if (now - lastFPS >= 500) { // update roughly twice a second
+        els.sps.textContent = Math.round(stepsThisSec * 1000 / (now - lastFPS));
+        stepsThisSec = 0; lastFPS = now;
+      }
+      if ((sim.stepCount % 20) === 0) { // not every frame, to save work
+        renderer.refreshColors();
+        updateStats();
+      }
+      renderer.render(dt, els.autorotate.value);
+      if (running) rafId = requestAnimationFrame(animate);
+    }
+
+    // ---- Wire up UI ----
+    els.T.addEventListener('input', ()=>{
+      const v = parseFloat(els.T.value); els.TLabel.textContent = v.toFixed(2); els.TBadge.textContent = els.TLabel.textContent;
+    });
+    els.T.dispatchEvent(new Event('input'));
+
+    els.spf.addEventListener('input', ()=>{ els.spfLabel.textContent = els.spf.value; });
+    els.spf.dispatchEvent(new Event('input'));
+
+    els.kind.addEventListener('change', ()=>{ els.p.disabled = (els.kind.value !== 'iid'); });
+    els.kind.dispatchEvent(new Event('change'));
+
+    els.inactiveMode.addEventListener('change', ()=> renderer && renderer.setInactiveMode(els.inactiveMode.value));
+    els.autorotate.addEventListener('change', ()=> {/* handled in render() */});
+
+    els.btnStart.addEventListener('click', ()=>{
+      running = !running;
+      els.btnStart.textContent = running ? 'Pause' : 'Start';
+      if (running) { last = performance.now(); lastFPS=last; stepsThisSec=0; animate(); } else { cancelAnimationFrame(rafId); }
+    });
+
+    els.btnStep.addEventListener('click', ()=>{
+      const T = parseFloat(els.T.value);
+      sim.glauber_update(T);
+      renderer.refreshColors();
+      updateStats();
+    });
+
+    els.btnReset.addEventListener('click', ()=>{
+      initAll();
+    });
+
+    els.btnRandom.addEventListener('click', ()=>{
+      sim.sample_Z_parity_checks(els.kind.value, parseFloat(els.p.value));
+      renderer.refreshColors(true);
+      updateStats(true);
+    });
+
+    els.L.addEventListener('change', initAll);
+    els.seed.addEventListener('change', initAll);
+
+    window.addEventListener('keydown', (e)=>{
+      if (e.code==='Space') { e.preventDefault(); els.btnStart.click(); }
+      else if (e.key==='S' || e.key==='s') { els.btnStep.click(); }
+      else if (e.key==='R' || e.key==='r') { els.btnRandom.click(); }
+      else if (e.key==='0') { els.T.value='0'; els.T.dispatchEvent(new Event('input')); }
+    });
+
+    initAll();
+    // initial render
+    renderer.render(0);
+  </script>
+</body>
+</html>
